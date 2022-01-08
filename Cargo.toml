@@ -21,3 +21,5 @@ resolv = "0.2.0"
 # Logging
 fern =  { version = "0.6.0" }
 log = { version = "0.4.11" }
+
+ffmpeg-next = "4.4.0"
