@@ -1,0 +1,23 @@
+[package]
+name = "mucast"
+version = "0.0.0"
+authors = ["Jayden Dumouchel <jdumouch@ualberta.ca>"]
+edition = "2021"
+
+[dependencies]
+# Async
+tokio = { version = "0.2", features = ["full", "sync"] }
+
+# Chromecast
+rust_cast = "0.16.0" # <-- ABOSULUTE UNITS
+mdns = "1.1.0"       # <-- THANK YOU BOTH!!
+futures-util = "0.3.19"
+regex = "1.5"
+
+# Server hosting
+warp = "0.2"
+resolv = "0.2.0"
+
+# Logging
+fern =  { version = "0.6.0" }
+log = { version = "0.4.11" }
