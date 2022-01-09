@@ -1,7 +1,7 @@
-# μCast 
-(mucast)
+# μCaster 
+(mucaster)
 
-Once completed, μCast is a cross-platform Chromecast controller that can play files directly from a host computer. This project is directly inspired by Gnomecast and Videostream while aiming to provide a more lightweight, terminal/webapp based, cross-platform alternative. The webapp merely serves as an interface and can be swapped/supplemented freely, provided a matching API is used.
+Once completed, μCaster is a cross-platform Chromecast controller that can play files directly from a host computer. This project is directly inspired by Gnomecast and Videostream while aiming to provide a more lightweight, terminal/webapp based, cross-platform alternative. The webapp merely serves as an interface and can be swapped/supplemented freely, provided a matching API is used.
 
 Windows and Linux are the only supported platforms. MacOS may work, however will never actively be tested or supported (by me).   
 

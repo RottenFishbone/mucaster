@@ -1,5 +1,5 @@
 [package]
-name = "mucast"
+name = "mucaster"
 version = "0.0.0"
 authors = ["Jayden Dumouchel <jdumouch@ualberta.ca>"]
 edition = "2021"
