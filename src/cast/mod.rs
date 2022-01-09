@@ -6,7 +6,7 @@ use mdns::{Record, RecordKind};
 use futures_util::{pin_mut, stream::StreamExt};
 use regex::Regex;
 use warp::hyper::{Client, body::HttpBody};
-use std::{future, net::{IpAddr, UdpSocket}, sync::mpsc::{Receiver, Sender, TryRecvError}, thread, time::{SystemTime, Duration}};
+use std::{future, net::{IpAddr, UdpSocket}, sync::{mpsc::{Sender, TryRecvError}, Mutex, Arc}, thread, time::{SystemTime, Duration}};
 use rust_cast::{CastDevice, ChannelMessage, channels::media::MediaResponse};
 use rust_cast::channels::{
     heartbeat::HeartbeatResponse,
@@ -17,6 +17,7 @@ use rust_cast::channels::{
 const DESTINATION_ID: &'static str = "receiver-0";
 const SERVICE_NAME: &'static str = "_googlecast._tcp.local";
 const TIMEOUT_SECONDS: u64 = 3;
+const STATUS_UPDATE_INTERVAL: u128 = 1000;
 
 #[derive(Debug, Clone)]
 pub enum MediaStatus {
@@ -37,8 +38,7 @@ enum PlayerSignal {
 pub struct Caster {
     device_addr: Option<String>,
     shutdown_tx: Option<Sender<()>>,
-    status_rx: Option<Receiver<MediaStatus>>,
-    pub status: Option<MediaStatus>,
+    pub status: Arc<Mutex<MediaStatus>>,
 }
 impl Drop for Caster {
     fn drop(&mut self) {
@@ -50,18 +50,7 @@ impl Caster {
         Self {
             device_addr: None,
             shutdown_tx: None,
-            status_rx: None,
-            status: None,
-        }
-    }
-
-    pub fn refresh_status(&mut self) {
-        // Poll the status reciever for an update
-        if let Some(rx) = &self.status_rx {
-            if let Ok(status) = rx.try_recv() {
-                // Update the caster's status
-                self.status = Some(status);
-            }
+            status: Arc::from(Mutex::from(MediaStatus::Inactive)),
         }
     }
 
@@ -73,11 +62,15 @@ impl Caster {
     /// Close the connection between the Caster and the Chromecast device, 
     /// if possible.  
     pub fn close(&mut self) {
-        // Send a stop signal to the chromecast
-        if let Some(status) = &self.status { 
-            self.stop().unwrap(); 
+        // Check if the status is set to Active
+        match *self.status.lock().unwrap() {
+            MediaStatus::Active(_) => {
+                // Tell the chromecast to stop casting
+                self.stop().unwrap();
+            }
+            _ => {},
         }
-        // Send a shutdown signal to the keepalivethread
+        // Send a shutdown signal to the keep-alive thread
         if let Some(sender) = &self.shutdown_tx {
             let _ = sender.send(());
             self.shutdown_tx = None;
@@ -86,28 +79,25 @@ impl Caster {
 
     /// Open a new connection with the Chromecast. An event loop thread will be
     /// spawned to manage keep alive and poll for media status updates.
-    pub fn begin_cast(&mut self, port: u16) -> Result<(), CastError> {
+    pub fn begin_cast(&mut self, media_port: u16) -> Result<(), CastError> {
         // Ensure there is a device to cast to
         let addr = match &self.device_addr {
             Some(addr) => addr.clone(),
             None => {
-                return Err(
-                    CastError::CasterError("No device address selected."));
+                return Err(CastError::CasterError("No device address selected."));
             }
         };
         // Channel to kill casting
         let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
-        let (status_tx, status_rx) = std::sync::mpsc::channel::<MediaStatus>();
         self.shutdown_tx = Some(shutdown_tx);
-        self.status_rx = Some(status_rx);
 
         // Open a thread to handle recieve status updates
+        let status_ref = self.status.clone();
         let mut last_media_status = SystemTime::now();
         let mut status_delay = 5000; 
         let handle = thread::spawn(move || {
             // Open the device connection
-            let device = CastDevice::
-                connect_without_host_verification(addr, 8009).unwrap();
+            let device = CastDevice::connect_without_host_verification(addr, 8009).unwrap();
             device.connection.connect(DESTINATION_ID).unwrap();
             log::info!("[Chromecast] Connected to device");
 
@@ -121,7 +111,9 @@ impl Caster {
 
             // Connect to the app and begin playback
             let media_addr = format!("http://{}:{}", 
-                                get_local_ip().unwrap(), port);
+                get_local_ip().unwrap(), 
+                media_port);
+            
             device.connection.connect(&transport_id).unwrap();
             device.media.load(
                 &transport_id, 
@@ -136,13 +128,14 @@ impl Caster {
             ).unwrap();
 
             log::info!("[Chromecast] Loaded media.");
+            
             // Chromecast communication loop
             loop { 
                 // Poll the shutdown reciever
                 match shutdown_rx.try_recv() {
                     Ok(_) | Err(TryRecvError::Disconnected) => {
-                        // Break thread loop
-                        println!("Killing status communication thread.");
+                        // Break the thread loop, closing the thread
+                        log::info!("[Chromecast] Closing comm thread.");
                         return;                        
                     },
                     Err(TryRecvError::Empty) => {}
@@ -150,27 +143,30 @@ impl Caster {
 
                 // Handle device communication
                 // If this is not done often enough the connection will die
-                if let Some((ch_msg, msg)) = 
-                    Caster::handle_device_status(&device){
+                // This blocking call is why media control is on a separate 
+                // thread from status updates
+                if let Some((ch_msg, msg)) = Caster::handle_device_status(&device){
 
-                    // Check if the device sent a media status
+                    // Check if the device sent a Media message
                     if let ChannelMessage::Media(media_msg) = ch_msg {
                         if let MediaResponse::Status(media_status) = media_msg{
                             last_media_status = SystemTime::now();
                             if let Some(status) = media_status.entries.first(){
-                                let _ =  status_tx.send(status.clone().into());
+                                *status_ref.lock().unwrap() = status.clone().into();
                             }
                         }
                     }
-                    log::info!("[Device Message] {:?}", &msg);
+
+                    log::info!("[Device Message] {}", &msg);
                 }
 
                 let millis_since_last = last_media_status
                     .elapsed().unwrap()
                     .as_millis();
+
                 // Update media status if it hasn't recently
                 if millis_since_last >= status_delay {
-                    status_delay = 1000;
+                    status_delay = STATUS_UPDATE_INTERVAL;
                     // Retrieve media status
                     let statuses = match device.media
                         .get_status(&transport_id, None) {
@@ -186,7 +182,7 @@ impl Caster {
                         None => MediaStatus::Inactive
                     };
                     log::info!("[Status] {:?}", &status);
-                    let _ = status_tx.send(status);
+                    *status_ref.lock().unwrap() = status;
                     last_media_status = SystemTime::now();
                 }
                 
@@ -231,6 +227,7 @@ impl Caster {
                         // Reply to ping with pong
                         if let HeartbeatResponse::Ping = resp {
                             device.heartbeat.pong().unwrap();
+                            log::info!("[Heartbeat] Pong sent.");
                         }
                         return Some((msg.clone(),
                             (format!("[Heartbeat] {:?}", resp))));
@@ -251,7 +248,7 @@ impl Caster {
             MediaResponse::Status(status) => status,
             _=> {return;}
         };
-
+        
         log::info!("[Media] {:?}", status);
     }
 
@@ -382,7 +379,8 @@ pub async fn find_chromecasts() -> Result<Vec<(String, IpAddr)>, CastError> {
         }
     }
 
-    // TODO Parallelize this to get all chromecasts at the same time
+    // TODO Parallelize name gathering to get all device names available at once
+
     // Poll the chromecast for their names
     let client = Client::new();
     let mut chromecasts = Vec::<(String, IpAddr)>::new();
@@ -416,7 +414,8 @@ pub async fn find_chromecasts() -> Result<Vec<(String, IpAddr)>, CastError> {
             }
         }    
 
-        // If for some reason we couldn't get the name, just call it Unknown and save the IP
+        // If for some reason we couldn't get the name, 
+        // just call it Unknown and save the ip address
         chromecasts.push((String::from("Unknown"), ip));
     }
 

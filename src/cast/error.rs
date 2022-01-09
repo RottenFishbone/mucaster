@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub enum CastError {
     RustCastError(rust_cast::errors::Error),
