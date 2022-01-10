@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 
@@ -16,7 +15,7 @@ async fn main() {
         .level(log::LevelFilter::Info)
         .chain(std::io::stdout())
         .apply().unwrap();
-
+    
     // Spawn the casting thread
     // this will be where the API is interfaced
     let mut caster = cast::Caster::new();    
@@ -27,7 +26,7 @@ async fn main() {
     std::thread::spawn(move || {
         handle.spawn( async move {
             let (_shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-            server::host_api(8008, shutdown_rx, cast_tx, media_status).await;
+            server::host_api(8008, shutdown_rx, cast_tx).await;
         });
     });
     
@@ -52,8 +51,20 @@ async fn main() {
     
     // API loop
     loop {
-        let signal = cast_rx.recv().await;
+        // Player Signals
+        let signal = cast_rx.recv().await.unwrap();
         log::info!("[API] Signal received: {:?}", signal);
-        caster.pause().unwrap();
+        match signal {
+            api::Request::Cast(cast_signal) => {
+                // TODO error handling
+                match cast_signal {
+                    api::CastSignal::Pause => caster.pause().unwrap(),
+                    api::CastSignal::Play => caster.resume().unwrap(),
+                    api::CastSignal::Stop => caster.stop().unwrap(),
+                    api::CastSignal::Seek(time) => caster.seek(time).unwrap(),
+                    _ => {}
+                }
+            }
+        }
     };
 }

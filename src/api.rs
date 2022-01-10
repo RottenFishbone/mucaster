@@ -1,13 +1,15 @@
-#[derive(Debug, Clone, Copy)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Request {
     Cast(CastSignal)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum CastSignal {
     Begin(u32),
     Stop,
     Pause,
     Play,
-    Seek(u32),
+    Seek(f32),
 }

@@ -1,30 +1,25 @@
 use crate::api;
 
 use std::path::Path;
-use tokio::sync::{
-    oneshot,
-    mpsc::{Receiver, Sender}
-};
+use tokio::sync::{ oneshot, mpsc };
 use warp::Filter;
+
+fn json_to_signal() -> impl Filter<Extract = (api::CastSignal,), Error = warp::Rejection> + Clone {
+    warp::body::content_length_limit(1024).and(warp::body::json())
+}
 
 /// Launches a warp server to host the web interface. This includes the webapp
 /// and the api.
 pub async fn host_api(port: u16, 
     shutdown_rx: oneshot::Receiver<()>,
-    cast_tx: Sender<api::Request>) {
-
-    /*
-    // TODO conditionally host the webapp, this is not trivial afaik
-    let routes = warp::get().and(
-        warp::fs::dir("webapp")
-            .or(api)
-    );*/
+    cast_tx: mpsc::Sender<api::Request>) {
 
     let tx_filter = warp::any().map(move || cast_tx.clone());
     let put_signals = warp::put()
         .and(warp::path("api"))
-        .and(warp::path("pause"))
+        .and(warp::path("cast-signal"))
         .and(warp::path::end())
+        .and(json_to_signal())
         .and(tx_filter)
         .and_then(put_cast_signal);
 
@@ -37,20 +32,18 @@ pub async fn host_api(port: u16,
     server.await;
 }
 
-async fn put_cast_signal(mut cast_tx: Sender<api::Request>) ->
+async fn put_cast_signal(
+    signal: api::CastSignal,
+    mut cast_tx: mpsc::Sender<api::Request>) ->
     Result<impl warp::Reply, warp::Rejection> {
     
-    // Send a pause signal to the caster thread
-    cast_tx.send(
-        api::Request::Cast(
-            api::CastSignal::Pause)
-        )
-        .await.unwrap();
+    // Send the requested signal to the caster thread
+    cast_tx.send( api::Request::Cast(signal) ).await.unwrap();
 
     // Respond to the PUT with success
     Ok(
         warp::reply::with_status(
-            "Pause request sent.", 
+            "Signal sent.",
             warp::http::StatusCode::ACCEPTED
         )
     )
