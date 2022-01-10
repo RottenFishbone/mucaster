@@ -1,5 +1,5 @@
 use ffmpeg::{
-    codec, decoder, encoder, format, frame, log, media, picture, Dictionary, Packet, Rational,
+    codec, encoder, format, log, media, Rational,
 };
 
 /// Move media streams from one container to another.
@@ -10,6 +10,7 @@ use ffmpeg::{
 ///
 /// #### Usage
 /// `remux("media.mkv", "media.mp4");`
+#[allow(dead_code)]
 pub fn remux(input: String, output: String) { 
 
     ffmpeg::init().unwrap();

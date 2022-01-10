@@ -22,4 +22,9 @@ resolv = "0.2.0"
 fern =  { version = "0.6.0" }
 log = { version = "0.4.11" }
 
+# Utilities
+indoc = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+
+# Media
 ffmpeg-next = "4.4.0"
