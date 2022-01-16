@@ -1,5 +1,5 @@
 #![allow(dead_code, unused_variables)]
-mod error;
+pub mod error;
 
 use error::CastError;
 use mdns::{Record, RecordKind};
@@ -13,6 +13,8 @@ use rust_cast::channels::{
     media::{Media, StatusEntry, StreamType},
     receiver::CastDeviceApp,
 };
+
+pub type Error = error::CastError;
 
 const DESTINATION_ID: &'static str = "receiver-0";
 const SERVICE_NAME: &'static str = "_googlecast._tcp.local";

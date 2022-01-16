@@ -48,13 +48,33 @@ async fn put_cast_signal(
     mut cast_tx: mpsc::Sender<api::Request>) ->
     Result<impl warp::Reply, warp::Rejection> {
     
+    
+    let (req_tx, mut req_rx) = oneshot::channel::<String>();
     // Send the requested signal to the caster thread
-    cast_tx.send( api::Request::Cast(signal) ).await.unwrap();
-
-    // Respond to the PUT with success
+    let request = api::Request::Put( api::PutType::Control(signal), req_tx);
+    cast_tx.send( request ).await.unwrap();
+    
+    // TODO timeout error
+    // Spin and wait for a response
+    let api_resp;
+    loop {
+        match req_rx.try_recv() {
+            Ok(resp) => {
+                api_resp = resp;
+                break;
+            },
+            Err(oneshot::error::TryRecvError::Closed) => {
+                api_resp = "Failed to reach API".into();
+                break;
+            },
+            _ => {},
+        }
+    }
+    
+    // TODO reply with error, in needed
     Ok(
         warp::reply::with_status(
-            "Signal forwarded to chromecast.",
+            api_resp,
             warp::http::StatusCode::OK
         )
     )
