@@ -13,6 +13,11 @@ fn json_to_signal() -> impl Filter<Extract = (api::CastSignal,), Error = warp::R
 pub async fn host_api(port: u16, 
     shutdown_rx: oneshot::Receiver<()>,
     cast_tx: mpsc::Sender<api::Request>) {
+    
+    let webapp = warp::get().and(
+        warp::fs::dir("webapp/dist/mucast-frontend")  
+    )
+    .and(warp::path::end());
 
     let tx_filter = warp::any().map(move || cast_tx.clone());
     let put_signals = warp::put()
@@ -23,8 +28,14 @@ pub async fn host_api(port: u16,
         .and(tx_filter)
         .and_then(put_cast_signal);
 
+    
+    let route = warp::any().and(
+        webapp
+            .or(put_signals)
+    );
+
     let addr = ([0,0,0,0], port);
-    let (_, server) = warp::serve(put_signals)
+    let (_, server) = warp::serve(route)
         .bind_with_graceful_shutdown(addr, async {
             shutdown_rx.await.ok();
         });
@@ -43,8 +54,8 @@ async fn put_cast_signal(
     // Respond to the PUT with success
     Ok(
         warp::reply::with_status(
-            "Signal sent.",
-            warp::http::StatusCode::ACCEPTED
+            "Signal forwarded to chromecast.",
+            warp::http::StatusCode::OK
         )
     )
 }
