@@ -53,6 +53,20 @@ impl Caster {
             status: Arc::from(Mutex::from(MediaStatus::Inactive)),
         }
     }
+    
+    /// Check if the caster is linked to a chromecast and is actively playing
+    /// content.
+    /// # Returns
+    /// `true` if the caster is currently streaming, else `false`. 
+    /// Note, ended playback will return `false`.
+    pub fn is_streaming(&self) -> bool {
+        let is_active = match self.status.lock().unwrap().clone() {
+            MediaStatus::Inactive => false,
+            _ => true,
+        };
+
+        self.device_addr.is_some() && is_active
+    }
 
     /// Set the target chromecast IP address to use.
     pub fn set_device_addr(&mut self, addr: &str) {
