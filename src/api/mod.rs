@@ -1,9 +1,9 @@
 pub mod error;
 
-use crate::cast;
+use crate::{cast, video_encoding::Chromecast};
 use std::net::IpAddr;
 use serde::{Serialize, Deserialize};
-use tokio::sync::oneshot;
+use tokio::{sync::oneshot, runtime::Handle};
 
 pub type Error = error::ApiError;
 
@@ -29,7 +29,8 @@ pub enum GetType {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PutType {
     /// Used to transmit signals to the chromecast
-    Control(CastSignal),   
+    Control(CastSignal), 
+    Discover,
 }
 
 /// CastSignals are used to send requests to the chromecast for playback
@@ -65,13 +66,35 @@ impl Api {
     
     /// Polls the network for mDNS devices to build a list of available chromecasts.
     /// The discovered devices are cached and can be returned with `get_discovered_chromecasts()`
+    /// This function MUST be called on the tokio::runtimes' thread, otherwise, you will need to
+    /// use the runtime's handle and replicate this function using that.
     /// # Returns
     /// `&Vec<(String, IpAddress)` - A vec containing all the found devices as (FriendlyName,
     /// IpAddress)
-    /// `cast::Error` - on failure
-    pub async fn discover_chromecasts(&mut self) -> Result<&Vec<(String,IpAddr)>, Error> {
-        self.discovered_chromecasts = cast::find_chromecasts().await?;
-        Ok(&self.discovered_chromecasts)
+    /// `ApiError` - on failure
+    pub fn discover_chromecasts(&mut self) -> Result<(), Error> {
+        // Call find_chromecasts on tokio::runtime
+        let (tx, mut rx) = oneshot::channel::<Result<Vec<(String, IpAddr)>, cast::Error>>();
+        tokio::spawn( async move {
+            tx.send(cast::find_chromecasts().await).unwrap();
+        });
+                
+        // Wait for the thread to send the list of chromecasts
+        let chromecasts;
+        loop {
+            if let Ok(msg) = rx.try_recv() {
+                chromecasts = msg;
+                break;
+            }
+        }
+        
+        // Either store the result or return the error
+        match chromecasts {
+            Ok(chromecasts) => self.discovered_chromecasts = chromecasts,
+            Err(err) => return Err(err.into()),
+        }
+
+        Ok(())
     }
 
     /// Returns a reference the cached Vec holding all the previously discovered chromecasts.
@@ -95,16 +118,18 @@ impl Api {
     }
 
     /// Handles API requests from a client.
-    pub fn handle_request(&self, request: Request) {
+    pub fn handle_request(&mut self, request: Request) {
         match request {
             // Handle Put requests
             Request::Put(put, sender) => {
                 match put {
                     // Forward CastSignal to handler
                     PutType::Control(signal) => self.handle_control_request(signal, sender),
-                    
+                    // Perform mDNS discovery, this is blocking
+                    PutType::Discover => self.discover_chromecasts().unwrap(),
                 }
             }
+
             // Handle Get requests
             Request::Get(get, sender) => {
                 match get {
