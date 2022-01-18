@@ -5,6 +5,7 @@ use error::CastError;
 use mdns::{Record, RecordKind};
 use futures_util::{pin_mut, stream::StreamExt};
 use regex::Regex;
+use serde::{Serialize, ser::SerializeStruct};
 use warp::hyper::{Client, body::HttpBody};
 use std::{future, net::{IpAddr, UdpSocket}, sync::{mpsc::{Sender, TryRecvError}, Mutex, Arc}, thread, time::{SystemTime, Duration}};
 use rust_cast::{CastDevice, ChannelMessage, channels::media::MediaResponse};
@@ -19,15 +20,48 @@ pub type Error = error::CastError;
 const DESTINATION_ID: &'static str = "receiver-0";
 const SERVICE_NAME: &'static str = "_googlecast._tcp.local";
 const TIMEOUT_SECONDS: u64 = 3;
-const STATUS_UPDATE_INTERVAL: u128 = 1000;
+const STATUS_UPDATE_INTERVAL: u128 = 500;
 
+/// An enum containing useful playback info for the caster, can be serialized.
 #[derive(Debug, Clone)]
 pub enum MediaStatus {
     Active(StatusEntry),
     Inactive,
 }
+// Convert from rust-cast StatusEntry type into mucaster MediaStatus
 impl From<StatusEntry> for MediaStatus {
     fn from(entry: StatusEntry) -> Self { MediaStatus::Active(entry) }
+}
+// Serializing is implemented to transmit playback data over HTTP
+impl Serialize for MediaStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state;
+        match self {
+            MediaStatus::Inactive => {
+                state = serializer.serialize_struct("status", 1).unwrap();
+                state.serialize_field("playbackState", "Inactive").unwrap();
+                state.end()
+            }
+            MediaStatus::Active(entry) => {    
+                let mut num_fields = 1;
+                if entry.current_time.is_some() { num_fields += 1; }
+                if let Some(media) = &entry.media { 
+                    if media.duration.is_some() { num_fields += 1; }
+                }
+
+                state = serializer.serialize_struct("status", num_fields).unwrap();
+                state.serialize_field("playbackState", &entry.player_state.to_string()).unwrap();
+                if let Some(media) = &entry.media {
+                    state.serialize_field("videoLength", &media.duration.unwrap()).unwrap();
+                }
+                if let Some(time) = &entry.current_time {
+                    state.serialize_field("currentTime", time).unwrap();
+                }
+                state.end()
+            }
+        }
+    }
 }
 
 enum PlayerSignal {
@@ -78,13 +112,8 @@ impl Caster {
     /// Close the connection between the Caster and the Chromecast device, 
     /// if possible.  
     pub fn close(&mut self) {
-        // Check if the status is set to Active
-        match *self.status.lock().unwrap() {
-            MediaStatus::Active(_) => {
-                // Tell the chromecast to stop casting
-                self.stop().unwrap();
-            }
-            _ => {},
+        if self.is_streaming() {
+            self.stop().unwrap();
         }
         // Send a shutdown signal to the keep-alive thread
         if let Some(sender) = &self.shutdown_tx {
@@ -161,18 +190,8 @@ impl Caster {
                 // If this is not done often enough the connection will die
                 // This blocking call is why media control is on a separate 
                 // thread from status updates
-                if let Some((ch_msg, msg)) = Caster::handle_device_status(&device){
-
-                    // Check if the device sent a Media message
-                    if let ChannelMessage::Media(media_msg) = ch_msg {
-                        if let MediaResponse::Status(media_status) = media_msg{
-                            last_media_status = SystemTime::now();
-                            if let Some(status) = media_status.entries.first(){
-                                *status_ref.lock().unwrap() = status.clone().into();
-                            }
-                        }
-                    }
-
+                // TODO utilize rust-cast 1.6 thread_safe, where was that a year ago :P
+                if let Some((ch_msg, msg)) = Caster::handle_device_status(&device, status_ref.clone()){
                     log::info!("[Device Message] {}", &msg);
                 }
 
@@ -197,7 +216,7 @@ impl Caster {
                         Some(status) => MediaStatus::Active(status.clone()),
                         None => MediaStatus::Inactive
                     };
-                    log::info!("[Status] {:?}", &status);
+                    log::info!("[Chromecast -- Status] {:?}", &status);
                     *status_ref.lock().unwrap() = status;
                     last_media_status = SystemTime::now();
                 }
@@ -208,14 +227,14 @@ impl Caster {
         Ok(())
     }
 
-    /// Block until device status is recieved.  
+    /// Block until device status is received.  
     /// The message is parsed into a string, and returned.  
     /// If the message was a Heartbeat, a pong will be returned to the 
     /// chromecast.
     /// ### Returns
     /// - On success: ***Some(Log message as String)***
     /// - On error: ***None***
-    fn handle_device_status(device: &CastDevice) 
+    fn handle_device_status(device: &CastDevice, media_status_ref: Arc<Mutex<MediaStatus>>) 
         -> Option<(ChannelMessage, String)> {
         match device.receive() {
             Ok(msg) => {
@@ -226,7 +245,7 @@ impl Caster {
                             format!("[Device=>Connection] {:?}", resp)));
                     }
                     ChannelMessage::Media(resp) => {
-                        Self::handle_media_status(resp);
+                        Self::handle_media_status(resp, media_status_ref);
                         return Some((msg.clone(), 
                             format!("[Device=>Media] {:?}", resp)));
                     }
@@ -250,7 +269,7 @@ impl Caster {
                     }
                 }
             },
-            // Failed to recieve message
+            // Failed to receive message
             Err(err) => {
                 log::error!("An error occured while recieving 
                             message from chromecast:\n{:?}", err);
@@ -259,13 +278,12 @@ impl Caster {
         }
     }
     
-    fn handle_media_status(resp: &MediaResponse) {
+    // TODO this function can likely be deleted and device message media updates ignored
+    fn handle_media_status(resp: &MediaResponse, media_status_ref: Arc<Mutex<MediaStatus>>) {
         let status = match resp {
-            MediaResponse::Status(status) => status,
+            MediaResponse::Status(status) => status.clone(),
             _=> {return;}
         };
-        
-        log::info!("[Media] {:?}", status);
     }
 
     /// Resumes playback on chromecast if it is paused.
