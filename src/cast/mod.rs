@@ -191,7 +191,7 @@ impl Caster {
                 // This blocking call is why media control is on a separate 
                 // thread from status updates
                 // TODO utilize rust-cast 1.6 thread_safe, where was that a year ago :P
-                if let Some((ch_msg, msg)) = Caster::handle_device_status(&device, status_ref.clone()){
+                if let Some((ch_msg, msg)) = Caster::handle_device_status(&device){
                     log::info!("[Device Message] {}", &msg);
                 }
 
@@ -216,7 +216,7 @@ impl Caster {
                         Some(status) => MediaStatus::Active(status.clone()),
                         None => MediaStatus::Inactive
                     };
-                    log::info!("[Chromecast -- Status] {:?}", &status);
+                    log::info!("[Chromecast] [Status] {:?}", &status);
                     *status_ref.lock().unwrap() = status;
                     last_media_status = SystemTime::now();
                 }
@@ -234,7 +234,7 @@ impl Caster {
     /// ### Returns
     /// - On success: ***Some(Log message as String)***
     /// - On error: ***None***
-    fn handle_device_status(device: &CastDevice, media_status_ref: Arc<Mutex<MediaStatus>>) 
+    fn handle_device_status(device: &CastDevice) 
         -> Option<(ChannelMessage, String)> {
         match device.receive() {
             Ok(msg) => {
@@ -245,7 +245,7 @@ impl Caster {
                             format!("[Device=>Connection] {:?}", resp)));
                     }
                     ChannelMessage::Media(resp) => {
-                        Self::handle_media_status(resp, media_status_ref);
+                        Self::handle_media_status(resp);
                         return Some((msg.clone(), 
                             format!("[Device=>Media] {:?}", resp)));
                     }
@@ -279,7 +279,7 @@ impl Caster {
     }
     
     // TODO this function can likely be deleted and device message media updates ignored
-    fn handle_media_status(resp: &MediaResponse, media_status_ref: Arc<Mutex<MediaStatus>>) {
+    fn handle_media_status(resp: &MediaResponse) {
         let status = match resp {
             MediaResponse::Status(status) => status.clone(),
             _=> {return;}

@@ -32,7 +32,8 @@ async fn main() {
     });
 
     let mut api = Api::new();
-    let chromecasts = api.discover_chromecasts().await.unwrap().clone();
+    api.discover_chromecasts().unwrap();
+    let chromecasts = api.get_discovered_chromecasts().clone();
     if let Some(cast) = chromecasts.first() {
         api.select_chromecast(cast).unwrap();    
     }
@@ -51,7 +52,7 @@ async fn main() {
     });
 
     api.caster.begin_cast(8009).unwrap();
-
+    
     // API loop
     loop {
         if let Some(request) = cast_rx.recv().await {

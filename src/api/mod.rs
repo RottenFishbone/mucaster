@@ -1,9 +1,9 @@
 pub mod error;
 
-use crate::{cast, video_encoding::Chromecast};
+use crate::cast;
 use std::net::IpAddr;
 use serde::{Serialize, Deserialize};
-use tokio::{sync::oneshot, runtime::Handle};
+use tokio::sync::oneshot;
 
 pub type Error = error::ApiError;
 
@@ -131,13 +131,7 @@ impl Api {
             }
 
             // Handle Get requests
-            Request::Get(get, sender) => {
-                match get {
-                    GetType::MediaStatus => {
-                        sender.send("Its doin stuff".into()).unwrap();
-                    }
-                }
-            }
+            Request::Get(get, sender) => self.handle_get_request(get, sender),
         }
     }
     
@@ -164,6 +158,16 @@ impl Api {
             CastSignal::Pause => self.caster.pause().unwrap(),
             CastSignal::Play => self.caster.resume().unwrap(),
             CastSignal::Seek(seconds) => self.caster.seek(seconds).unwrap(),
+        }
+    }
+
+    fn handle_get_request(&self, get_type: GetType, sender: oneshot::Sender<String>) {
+        match get_type {
+            GetType::MediaStatus => {
+                // Grab MediaStatus from the caster
+                let status = self.caster.status.lock().unwrap().clone();
+                let _ = sender.send(serde_json::to_string(&status).unwrap());
+            },
         }
     }
 }

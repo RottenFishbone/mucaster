@@ -9,8 +9,8 @@ edition = "2021"
 tokio = { version = "0.2", features = ["full", "sync"] }
 
 # Chromecast
-rust_cast = "0.16.0" # <-- ABOSULUTE UNITS
-mdns = "1.1.0"       # <-- THANK YOU BOTH!!
+rust_cast = { version = "0.16.0", features = ["thread_safe"] } 
+mdns = "1.1.0"       
 futures-util = "0.3.19"
 regex = "1.5"
 
