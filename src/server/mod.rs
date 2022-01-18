@@ -2,7 +2,7 @@ use crate::api;
 
 use std::path::Path;
 use tokio::sync::{ oneshot, mpsc };
-use warp::Filter;
+use warp::{reply::Response, Filter};
 
 /// Convert a json input into a CastSignal
 fn json_to_signal() -> impl Filter<Extract = (api::CastSignal,), Error = warp::Rejection> + Clone {
@@ -58,9 +58,11 @@ async fn get_media_status(mut api_tx: mpsc::Sender<api::Request>)
     let (req_tx, req_rx) = oneshot::channel::<String>();
     let request = api::Request::Get(api::GetType::MediaStatus, req_tx);
     api_tx.send( request ).await.unwrap();
-
+    
     match await_api_response(req_rx) {
-        Ok(resp) => Ok(warp::reply::json(&resp)),
+        Ok(resp) => {
+            Ok(Response::new(resp.into()))
+        },
         Err(_) => Err(warp::reject::reject()),
     }
 }
