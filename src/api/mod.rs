@@ -22,15 +22,17 @@ pub enum Request {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum GetType {
-    MediaStatus
+    MediaStatus,
+    Chromecasts,
 }
 
 /// PutTypes are used to determine what Put request is being called.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PutType {
     /// Used to transmit signals to the chromecast
-    Control(CastSignal), 
-    Discover,
+    Control(CastSignal),
+    SelectChromecast(String),
+    DiscoverChromecasts,
 }
 
 /// CastSignals are used to send requests to the chromecast for playback
@@ -109,6 +111,8 @@ impl Api {
         if self.discovered_chromecasts.contains(&device) {
             self.current_chromecast = Some(device.clone());
             self.caster.set_device_addr(&device.1.to_string());
+
+            log::info!("[API] Selected chromecast: {:?}", &device);
         }
         else{
             return Err(Error::ApiError("Device not found within discovered_chromecasts,try calling Api::discover_chromecasts() first.".into()));
@@ -124,9 +128,31 @@ impl Api {
             Request::Put(put, sender) => {
                 match put {
                     // Forward CastSignal to handler
-                    PutType::Control(signal) => self.handle_control_request(signal, sender),
+                    PutType::Control(signal) => self.handle_cast_signal(signal, sender),
+                    
                     // Perform mDNS discovery, this is blocking
-                    PutType::Discover => self.discover_chromecasts().unwrap(),
+                    PutType::DiscoverChromecasts => {
+                        log::info!("[API] Request recieved: DiscoverChromecasts");
+                        self.discover_chromecasts().unwrap();
+                        let _ = sender.send("Success.".into());
+                    },
+                    
+                    // Attempt to select specific chromecast
+                    PutType::SelectChromecast(addr) => {
+                        log::info!("[API] Request recieved: select chromecast '{}'", addr);
+                        // Try to match the chromecast with a discovered device
+                        if let Some(device) = &self.discovered_chromecasts
+                            .clone()
+                            .iter()
+                            .find(|x| x.1.to_string() == addr) {
+                            
+                            self.select_chromecast(&device.clone()).unwrap();
+                            let _ = sender.send("Success.".into());
+                        } 
+                        else {
+                            let _ = sender.send("Chromecast not found.".into());
+                        }
+                    },
                 }
             }
 
@@ -143,7 +169,7 @@ impl Api {
     /// do.
     /// `sender: Sender<String>` - The feedback to return to the client.
     // TODO Only reply to client after chromecast has reacted to signal. This allows for a client to determine when the chromecast has ACTUALLY enacted its request.
-    fn handle_control_request(&self, signal: CastSignal, sender: oneshot::Sender<String>) {
+    fn handle_cast_signal(&self, signal: CastSignal, sender: oneshot::Sender<String>) {
         let _ = sender.send("Request recieved.".into());
         log::info!("[API] Request recieved: {:?}", signal);
         
@@ -161,13 +187,26 @@ impl Api {
         }
     }
 
+    /// Handles Request::Get
     fn handle_get_request(&self, get_type: GetType, sender: oneshot::Sender<String>) {
         match get_type {
+
             GetType::MediaStatus => {
-                // Grab MediaStatus from the caster
+                // Grab MediaStatus from the caster, serialize to JSON and reply.
                 let status = self.caster.status.lock().unwrap().clone();
                 let _ = sender.send(serde_json::to_string(&status).unwrap());
             },
+            
+            GetType::Chromecasts => {
+                // Build Vec<(String, String)> from &Vec<(String, IpAddr)>
+                let chromecasts: Vec<(String, String)> = self.discovered_chromecasts
+                    .iter()
+                    .map(|x| (x.0.clone(), (x.1).to_string()))
+                    .collect();
+                
+                // Serialize to map in JSON and reply to API caller
+                let _ = sender.send(serde_json::to_string(&chromecasts).unwrap());
+            }
         }
     }
 }
