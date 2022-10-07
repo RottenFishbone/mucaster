@@ -1,3 +1,7 @@
+WIP
+---
+I just wanted to add a disclaimer that as it stands, this project is not functional. I do very much intend to finish it, however, I am attending university right now and have very little free time.
+
 # μCaster 
 (mucaster)
 
